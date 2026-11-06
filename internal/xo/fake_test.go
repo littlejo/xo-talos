@@ -24,10 +24,15 @@ type fakeAPI struct {
 	// templateDelay hides a new template from this many Templates calls,
 	// like XO's asynchronous object cache.
 	templateDelay int
-	calls         []string
-	ipAfter       int // GetVM reports an IP after this many calls on a running VM
-	bootOrder     map[uuid.UUID]string
-	patches       map[uuid.UUID]VMPatch
+	// vdiDelay hides a newly created VDI from this many VDIExists calls, like
+	// XO's asynchronous object cache: the VDI exists in xapi but is not yet in
+	// XO's cache, so lookups return "no such VDI".
+	vdiDelay  int
+	vdiHidden map[uuid.UUID]int
+	calls     []string
+	ipAfter   int // GetVM reports an IP after this many calls on a running VM
+	bootOrder map[uuid.UUID]string
+	patches   map[uuid.UUID]VMPatch
 }
 
 type fakeVM struct {
@@ -47,6 +52,7 @@ func newFakeAPI() *fakeAPI {
 		failOn:    map[string]error{},
 		bootOrder: map[uuid.UUID]string{},
 		patches:   map[uuid.UUID]VMPatch{},
+		vdiHidden: map[uuid.UUID]int{},
 	}
 	base := uuid.Must(uuid.NewV4())
 	f.templates[base] = &payloads.Template{
@@ -116,13 +122,36 @@ func (f *fakeAPI) CreateVDI(_ context.Context, p payloads.VDICreateParams) (uuid
 	}
 	id := uuid.Must(uuid.NewV4())
 	f.vdis[id] = nil
+	if f.vdiDelay > 0 {
+		f.vdiHidden[id] = f.vdiDelay
+	}
 	return id, nil
+}
+
+// vdiVisibleLocked reports whether the VDI is in XO's object cache and, like
+// the template cache, lets each lookup let the asynchronous events stream
+// catch up by one step.
+func (f *fakeAPI) vdiVisibleLocked(id uuid.UUID) bool {
+	if _, ok := f.vdis[id]; !ok {
+		return false
+	}
+	if n := f.vdiHidden[id]; n > 0 {
+		f.vdiHidden[id] = n - 1
+		return false
+	}
+	return true
 }
 
 func (f *fakeAPI) ImportVDI(ctx context.Context, id uuid.UUID, _ payloads.VDIFormat, r io.Reader, size int64) error {
 	f.mu.Lock()
 	err := f.enter("ImportVDI")
+	// Like XO, the import resolves the VDI in its object cache before reading
+	// the body: racing the cache fails with "no such VDI".
+	hidden := f.vdiHidden[id] > 0
 	f.mu.Unlock()
+	if hidden {
+		return fmt.Errorf("no such VDI %s", id)
+	}
 	if err != nil {
 		return err
 	}
@@ -145,8 +174,7 @@ func (f *fakeAPI) ImportVDI(ctx context.Context, id uuid.UUID, _ payloads.VDIFor
 func (f *fakeAPI) VDIExists(_ context.Context, id uuid.UUID) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	_, ok := f.vdis[id]
-	return ok, f.enter("VDIExists")
+	return f.vdiVisibleLocked(id), f.enter("VDIExists")
 }
 
 func (f *fakeAPI) DeleteVDI(_ context.Context, id uuid.UUID) error {
