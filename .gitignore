@@ -1,0 +1,4 @@
+/talos-xo-template
+*.raw
+*.raw.zst
+*.raw.xz
