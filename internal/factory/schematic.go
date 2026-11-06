@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // Schematic is an Image Factory schematic. It is kept as a generic document
