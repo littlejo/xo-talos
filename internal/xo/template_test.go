@@ -118,6 +118,21 @@ func TestBuildWaitsForTemplate(t *testing.T) {
 	}
 }
 
+// TestBuildWaitsForVDI reproduces XO's asynchronous object cache: the VDI is
+// created but not yet visible in the cache when the upload starts. Without the
+// wait, ImportVDI would fail with "no such VDI"; with it, the build succeeds.
+func TestBuildWaitsForVDI(t *testing.T) {
+	f := newFakeAPI()
+	f.vdiDelay = 3
+	b := newTestBuilder(f)
+	if _, err := b.Build(context.Background(), testSpec(f)); err != nil {
+		t.Fatalf("Build error = %v, want success after the VDI became visible", err)
+	}
+	if !slices.Contains(f.calls, "VDIExists") {
+		t.Fatalf("Build did not wait for the VDI to show up: %v", f.calls)
+	}
+}
+
 func TestBuildTemplateNeverVisible(t *testing.T) {
 	f := newFakeAPI()
 	theirVM, _ := seedUnrelated(f)

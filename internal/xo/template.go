@@ -218,6 +218,13 @@ func (b *Builder) waitForTemplate(ctx context.Context, poolID uuid.UUID, name st
 }
 
 func (b *Builder) upload(ctx context.Context, vdiID uuid.UUID, disk Disk) error {
+	// XO resolves the VDI in its object cache before importing, and that cache
+	// is fed by the asynchronous xapi events stream: right after the creation
+	// the VDI may not be visible yet, and the import fails with "no such VDI".
+	// Wait until it shows up, like waitForTemplate does for the template.
+	if err := b.waitForVDI(ctx, vdiID); err != nil {
+		return err
+	}
 	r, length, err := disk.Open()
 	if err != nil {
 		return err
@@ -230,6 +237,21 @@ func (b *Builder) upload(ctx context.Context, vdiID uuid.UUID, disk Disk) error 
 	}
 	pr.Finish()
 	return nil
+}
+
+// waitForVDI waits until the VDI is visible in XO's object cache.
+func (b *Builder) waitForVDI(ctx context.Context, vdiID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for {
+		exists, err := b.api.VDIExists(ctx, vdiID)
+		if err == nil && exists {
+			return nil
+		}
+		if sleepErr := b.sleep(ctx); sleepErr != nil {
+			return fmt.Errorf("VDI %s did not show up in Xen Orchestra: %w", vdiID, sleepErr)
+		}
+	}
 }
 
 // cleanup deletes the VM and VDI this run created. It uses a fresh context so
