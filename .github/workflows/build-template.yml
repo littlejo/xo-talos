@@ -1,0 +1,66 @@
+name: Build template
+
+# Builds the template of the latest stable Talos release every week, and on
+# demand. A run is a no-op when the template already exists.
+#
+# Configure the repository (Settings > Secrets and variables > Actions):
+#   secrets   XOA_ENDPOINT, XOA_TOKEN
+#   variables XO_SR_UUID (one SR per pool, comma-separated)
+#             XO_VERIFY_NETWORK_UUID (optional: one network per pool; enables
+#               --verify, so the runner must reach the test VMs on port 50000)
+#             TALOS_VERSION (optional, e.g. v1.13; default: latest)
+#             XOA_INSECURE (optional, "true" for a self-signed certificate)
+#             TEMPLATE_RUNNER (optional runner label, e.g. self-hosted, when
+#               Xen Orchestra is not reachable from GitHub-hosted runners)
+# The job is skipped while XO_SR_UUID is not set.
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      talos-version:
+        description: Talos version (latest, a minor line like v1.13, or an exact version)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-template
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: vars.XO_SR_UUID != ''
+    runs-on: ${{ vars.TEMPLATE_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build the template
+        env:
+          XOA_ENDPOINT: ${{ secrets.XOA_ENDPOINT }}
+          XOA_TOKEN: ${{ secrets.XOA_TOKEN }}
+          XOA_INSECURE: ${{ vars.XOA_INSECURE }}
+          XO_SR_UUID: ${{ vars.XO_SR_UUID }}
+          XO_VERIFY_NETWORK_UUID: ${{ vars.XO_VERIFY_NETWORK_UUID }}
+          TALOS_VERSION: ${{ inputs.talos-version || vars.TALOS_VERSION || 'latest' }}
+        run: |
+          set -euo pipefail
+          verify=()
+          if [ -n "$XO_VERIFY_NETWORK_UUID" ]; then verify=(--verify); fi
+          go run ./cmd/xo-talos --talos-version "$TALOS_VERSION" "${verify[@]}" \
+            --work-dir "$RUNNER_TEMP" --output json | tee templates.json
+          {
+            echo '### Talos templates'
+            echo
+            echo '| Pool | Template | UUID | Created | Verified |'
+            echo '|---|---|---|---|---|'
+            jq -r '.[] | "| `\(.pool_uuid)` | \(.template_name) | `\(.template_uuid)` | \(.created) | \(.verified) |"' templates.json
+          } >> "$GITHUB_STEP_SUMMARY"

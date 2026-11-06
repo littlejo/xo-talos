@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  # Called by release.yml so a release is only built from a commit that
+  # passed the same gates.
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out and test (defaults to the triggering commit).
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+
+      - name: Test
+        run: go test ./...
+
+      # The tests must not depend on the developer's environment.
+      - name: Test (hostile XOA_* environment)
+        env:
+          XOA_ENDPOINT: http://127.0.0.1:1
+          XOA_TOKEN: wrong-token
+          XOA_TIMEOUT: 1ms
+          XOA_INSECURE: '1'
+          XO_SR_UUID: not-a-uuid
+        run: go test -count=1 ./...
+
+      - name: Test (race)
+        run: go test -race ./...
+
+      - name: Build
+        run: go build -o dist/xo-talos ./cmd/xo-talos
