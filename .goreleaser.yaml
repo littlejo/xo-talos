@@ -1,0 +1,39 @@
+version: 2
+
+project_name: xo-talos
+
+builds:
+  - id: xo-talos
+    main: ./cmd/xo-talos
+    binary: xo-talos
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    # 64-bit only: the Xen Orchestra SDK uses int constants that overflow on
+    # 32-bit targets.
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+
+archives:
+  - id: xo-talos
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+changelog:
+  sort: asc
+
+release:
+  # Drafts, so a human reviews before publishing.
+  draft: true
+  prerelease: auto
