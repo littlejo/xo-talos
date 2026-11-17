@@ -6,7 +6,7 @@ require (
 	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/klauspost/compress v1.20.4
 	github.com/ulikunitz/xz v0.5.17
-	github.com/vatesfr/xenorchestra-go-sdk v1.22.0
+	github.com/vatesfr/xenorchestra-go-sdk v1.22.1
 	go.yaml.in/yaml/v4 v4.0.0
 )
 
