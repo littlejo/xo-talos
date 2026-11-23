@@ -31,6 +31,9 @@ type fakeAPI struct {
 	vdiHidden map[uuid.UUID]int
 	calls     []string
 	ipAfter   int // GetVM reports an IP after this many calls on a running VM
+	// ips, when set, are the addresses GetVM reports once ipAfter is passed,
+	// one per call, the last one repeated: e.g. link-local before DHCP
+	ips       []string
 	bootOrder map[uuid.UUID]string
 	patches   map[uuid.UUID]VMPatch
 }
@@ -223,6 +226,9 @@ func (f *fakeAPI) GetVM(_ context.Context, id uuid.UUID) (*payloads.VM, error) {
 		v.getCalls++
 		if v.getCalls > f.ipAfter {
 			v.vm.MainIpAddress = "192.0.2.10"
+			if len(f.ips) > 0 {
+				v.vm.MainIpAddress = f.ips[min(v.getCalls-f.ipAfter-1, len(f.ips)-1)]
+			}
 		}
 	}
 	vm := v.vm

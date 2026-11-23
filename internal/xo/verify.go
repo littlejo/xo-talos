@@ -53,33 +53,62 @@ func (b *Builder) Verify(ctx context.Context, spec VerifySpec) error {
 	}
 	b.logf("verify: xen-guest-agent reports %s", ip)
 
-	if err := b.waitForTalosAPI(ctx, ip); err != nil {
+	ip, err = b.waitForTalosAPI(ctx, vmID, ip)
+	if err != nil {
 		return fmt.Errorf("verify: %w", err)
 	}
 	b.logf("verify: Talos API answers on %s", net.JoinHostPort(ip, strconv.Itoa(TalosAPIPort)))
 	return nil
 }
 
+// waitForIP waits for xen-guest-agent to report an address the tool can reach.
+// The agent often reports the IPv6 link-local address first, before DHCP gives
+// the VM its address: a link-local address is only reachable from the same
+// link, with a zone, so it is skipped.
 func (b *Builder) waitForIP(ctx context.Context, vmID uuid.UUID) (string, error) {
+	skipped := ""
 	for {
 		vm, err := b.api.GetVM(ctx, vmID)
 		if err == nil && vm.MainIpAddress != "" {
-			return vm.MainIpAddress, nil
+			if reachable(vm.MainIpAddress) {
+				return vm.MainIpAddress, nil
+			}
+			if vm.MainIpAddress != skipped {
+				skipped = vm.MainIpAddress
+				b.logf("verify: xen-guest-agent reports %s, not reachable from here: waiting for another address", skipped)
+			}
 		}
 		if err := b.sleep(ctx); err != nil {
+			if skipped != "" {
+				return "", fmt.Errorf("no reachable IP address reported by xen-guest-agent for VM %s (only %s): %w", vmID, skipped, err)
+			}
 			return "", fmt.Errorf("no IP address reported by xen-guest-agent for VM %s: %w", vmID, err)
 		}
 	}
 }
 
-func (b *Builder) waitForTalosAPI(ctx context.Context, ip string) error {
+// reachable reports whether ip can be dialed from another network: not
+// link-local, loopback or unspecified.
+func reachable(ip string) bool {
+	addr := net.ParseIP(ip)
+	return addr != nil && !addr.IsLinkLocalUnicast() && !addr.IsLoopback() && !addr.IsUnspecified()
+}
+
+// waitForTalosAPI dials the Talos API until it answers. Between attempts it
+// reads the address again: the agent can report a new one (another interface,
+// a DHCP renewal), which is then dialed instead.
+func (b *Builder) waitForTalosAPI(ctx context.Context, vmID uuid.UUID, ip string) (string, error) {
 	for {
 		err := b.dialTalos(ctx, ip)
 		if err == nil {
-			return nil
+			return ip, nil
 		}
 		if ctxErr := b.sleep(ctx); ctxErr != nil {
-			return fmt.Errorf("the Talos API on %s is not reachable: %w", ip, err)
+			return "", fmt.Errorf("the Talos API on %s is not reachable: %w", ip, err)
+		}
+		if vm, getErr := b.api.GetVM(ctx, vmID); getErr == nil && vm.MainIpAddress != ip && reachable(vm.MainIpAddress) {
+			ip = vm.MainIpAddress
+			b.logf("verify: xen-guest-agent now reports %s", ip)
 		}
 	}
 }

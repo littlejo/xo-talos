@@ -221,6 +221,79 @@ func TestVerify(t *testing.T) {
 	}
 }
 
+// xen-guest-agent reports the IPv6 link-local address before DHCP gives the VM
+// its address: the link-local one is never dialed.
+func TestVerifyWaitsForAReachableIP(t *testing.T) {
+	f := newFakeAPI()
+	tpl := buildTemplate(t, f)
+	f.ips = []string{"fe80::dc7c:7cff:febf:5b93", "fe80::dc7c:7cff:febf:5b93", "192.0.2.20"}
+	b := newTestBuilder(f)
+	var dialed []string
+	b.dialTalos = func(_ context.Context, ip string) error {
+		dialed = append(dialed, ip)
+		return nil
+	}
+
+	err := b.Verify(context.Background(), VerifySpec{TemplateID: tpl, PoolID: f.pool, NetworkID: uuid.Must(uuid.NewV4()), Name: "verify", Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(dialed, []string{"192.0.2.20"}) {
+		t.Fatalf("dialed %v, want only 192.0.2.20", dialed)
+	}
+}
+
+// Only a link-local address: the error says so, and nothing is dialed.
+func TestVerifyOnlyLinkLocal(t *testing.T) {
+	f := newFakeAPI()
+	tpl := buildTemplate(t, f)
+	f.ips = []string{"fe80::1"}
+	b := newTestBuilder(f)
+	b.dialTalos = func(_ context.Context, ip string) error {
+		t.Errorf("dialed %s", ip)
+		return nil
+	}
+
+	err := b.Verify(context.Background(), VerifySpec{TemplateID: tpl, PoolID: f.pool, Name: "verify", Timeout: 50 * time.Millisecond})
+	if err == nil || !strings.Contains(err.Error(), "only fe80::1") {
+		t.Fatalf("Verify error = %v, want no reachable address", err)
+	}
+	if len(f.vms) != 1 {
+		t.Fatalf("test VM left behind: %v", f.vms)
+	}
+}
+
+// The Talos API does not answer on the first address, the agent then reports
+// another one: it is dialed.
+func TestVerifyFollowsANewIP(t *testing.T) {
+	f := newFakeAPI()
+	tpl := buildTemplate(t, f)
+	f.ips = []string{"192.0.2.30", "192.0.2.31"}
+	b := newTestBuilder(f)
+	b.dialTalos = func(_ context.Context, ip string) error {
+		if ip == "192.0.2.31" {
+			return nil
+		}
+		return errors.New("connection refused")
+	}
+
+	err := b.Verify(context.Background(), VerifySpec{TemplateID: tpl, PoolID: f.pool, Name: "verify", Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReachable(t *testing.T) {
+	for ip, want := range map[string]bool{
+		"192.0.2.10": true, "2001:db8::1": true,
+		"fe80::1": false, "169.254.1.1": false, "127.0.0.1": false, "::": false, "": false, "nope": false,
+	} {
+		if got := reachable(ip); got != want {
+			t.Errorf("reachable(%q) = %v, want %v", ip, got, want)
+		}
+	}
+}
+
 func TestVerifyTalosAPIUnreachable(t *testing.T) {
 	f := newFakeAPI()
 	tpl := buildTemplate(t, f)
