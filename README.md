@@ -112,7 +112,8 @@ itself:
 
 1. clones it into a test VM `xo-talos-verify-<id>` with one VIF on
    `--verify-network`, and boots the clone;
-2. waits for xen-guest-agent to report the clone's IP address;
+2. waits for xen-guest-agent to report an IP address of the clone the tool
+   can reach (the IPv6 link-local address, often reported first, is skipped);
 3. waits for the Talos API to accept a TLS connection on port 50000
    (maintenance mode), so the machine running the tool must reach that
    network;
